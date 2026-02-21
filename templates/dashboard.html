@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h2>Expense Dashboard</h2>
+
+<h3>Total Expense: ₹ {{ totals | sum | int }}</h3>
+
+<canvas id="myChart"></canvas>
+
+<canvas id="myChart" width="400" height="400"></canvas>
+
+<script>
+    var ctx = document.getElementById('myChart').getContext('2d');
+
+    var myChart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: {{ categories | tojson }},
+            datasets: [{
+                data: {{ totals | tojson }},
+                backgroundColor: [
+                    'red',
+                    'blue',
+                    'green',
+                    'orange',
+                    'purple'
+                ]
+            }]
+        }
+    });
+</script>
+
+<br>
+<a href="/">Back</a>
+
+</body>
+</html>
