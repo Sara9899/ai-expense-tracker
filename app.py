@@ -1,3 +1,4 @@
+import sqlite3
 from flask import Flask, render_template, request, redirect, session
 import sqlite3
 import numpy as np
@@ -6,6 +7,9 @@ from sklearn.linear_model import LinearRegression
 app = Flask(__name__)
 app.secret_key = "secret123"
 
+@app.route("/")
+def home():
+    return render_template("index.html")
 # ---------- DATABASE INIT ----------
 def init_db():
     conn = sqlite3.connect("database.db")
@@ -17,16 +21,9 @@ def init_db():
             date TEXT
         )
     """)
-conn = sqlite3.connect("database.db")
-conn.execute("""
-CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE,
-          password TEXT
-)
-""")
-
-conn.close()
+    conn.commit()
+    conn.close()
+    init_db()
 # ---------- HOME PAGE ----------
 @app.route("/dashboard")
 def index():
