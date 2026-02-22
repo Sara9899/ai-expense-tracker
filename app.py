@@ -21,9 +21,15 @@ def init_db():
             date TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            monthly_budget REAL
+        )
+    """)
     conn.commit()
     conn.close()
-    init_db()
+
 # ---------- HOME PAGE ----------
 @app.route("/dashboard")
 def index():
