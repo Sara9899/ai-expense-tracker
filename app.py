@@ -1,166 +1,205 @@
-import sqlite3
-from flask import Flask, render_template, request, redirect, session
+from flask import Flask, render_template, request, redirect
 import sqlite3
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
 app = Flask(__name__)
-app.secret_key = "secret123"
 
+# ===============================
+# DATABASE CONNECTION
+# ===============================
+conn = sqlite3.connect("database.db", check_same_thread=False)
+cursor = conn.cursor()
+
+# ===============================
+# CREATE TABLES
+# ===============================
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    amount REAL,
+    category TEXT,
+    date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS budget (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monthly_budget REAL
+)
+""")
+
+conn.commit()
+
+
+# ===============================
+# HOME PAGE
+# ===============================
 @app.route("/")
 def home():
-    return render_template("index.html")
-# ---------- DATABASE INIT ----------
-def init_db():
-    conn = sqlite3.connect("database.db")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS expenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            amount REAL,
-            category TEXT,
-            date TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS budgets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            monthly_budget REAL
-        )
-    """)
-    conn.commit()
-    conn.close()
 
-# ---------- HOME PAGE ----------
-@app.route("/dashboard")
-def index():
-    conn = sqlite3.connect("database.db")
-    expenses = conn.execute("SELECT * FROM expenses").fetchall()
-    conn.close()
-    return render_template("index.html", expenses=expenses)
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
+    cursor.execute("SELECT * FROM expenses ORDER BY date DESC")
+    expenses = cursor.fetchall()
 
-        try:
-            conn = sqlite3.connect("database.db")
-            cursor = conn.cursor()
+    # Total spent
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    total_result = cursor.fetchone()
+    total = total_result[0] if total_result[0] else 0
 
-            cursor.execute(
-                "INSERT INTO users (username, password) VALUES (?, ?)",
-                (username, password)
-            )
+    # Latest budget
+    cursor.execute("SELECT monthly_budget FROM budget ORDER BY id DESC LIMIT 1")
+    budget_result = cursor.fetchone()
+    budget = budget_result[0] if budget_result else 0
 
-            conn.commit()
-            conn.close()
+    # Category chart data
+    cursor.execute("SELECT category, SUM(amount) FROM expenses GROUP BY category")
+    category_data = cursor.fetchall()
+    categories = [row[0] for row in category_data]
+    amounts = [row[1] for row in category_data]
 
-        except sqlite3.IntegrityError:
-            return "Username already exists"
+    # Trend chart data
+    cursor.execute("SELECT date, amount FROM expenses ORDER BY date")
+    trend_data = cursor.fetchall()
+    dates = [row[0] for row in trend_data]
+    trend_amounts = [row[1] for row in trend_data]
 
-        finally:
-            conn.close()
+    return render_template(
+        "index.html",
+        expenses=expenses,
+        total=total,
+        budget=budget,
+        categories=categories,
+        amounts=amounts,
+        dates=dates,
+        trend_amounts=trend_amounts
+    )
 
-        return redirect("/login")
 
-    return render_template("register.html")
-#--------- register ----------#
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-
-        conn = sqlite3.connect("database.db")
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM users WHERE username=? AND password=?",
-            (username, password)
-        )
-        user = cursor.fetchone()
-        conn.close()
-
-        if user:
-            session["username"] = username
-            return redirect("/dashboard")
-        else:
-            return "Invalid credentials"
-
-    return render_template("login.html")
-# ---------- ADD EXPENSE ----------
+# ===============================
+# ADD EXPENSE
+# ===============================
 @app.route("/add", methods=["POST"])
-def add():
+def add_expense():
     amount = request.form["amount"]
     category = request.form["category"]
-    date = request.form["date"]
 
-    conn = sqlite3.connect("database.db")
-    conn.execute("INSERT INTO expenses (amount, category, date) VALUES (?, ?, ?)",
-                 (amount, category, date))
+    cursor.execute(
+        "INSERT INTO expenses (amount, category) VALUES (?, ?)",
+        (amount, category)
+    )
     conn.commit()
-    conn.close()
 
     return redirect("/")
 
 
-# ---------- DELETE ----------
-@app.route("/delete/<int:id>")
-def delete(id):
-    conn = sqlite3.connect("database.db")
-    conn.execute("DELETE FROM expenses WHERE id=?", (id,))
+# ===============================
+# SET BUDGET
+# ===============================
+@app.route("/set_budget", methods=["POST"])
+def set_budget():
+    budget = request.form["budget"]
+
+    cursor.execute(
+        "INSERT INTO budget (monthly_budget) VALUES (?)",
+        (budget,)
+    )
     conn.commit()
-    conn.close()
+
     return redirect("/")
 
 
-# ---------- DASHBOARD ----------
-@app.route("/dashboard")
-def dashboard():
-    conn = sqlite3.connect("database.db")
-    data = conn.execute("""
-        SELECT category, SUM(amount)
-        FROM expenses
-        GROUP BY category
-    """).fetchall()
-    conn.close()
+# ===============================
+# AI PREDICTION
+# ===============================
+@app.route("/predict")
+def predict():
 
-    categories = [row[0] for row in data]
-    totals = [row[1] for row in data]
-
-    return render_template("dashboard.html",
-                           categories=categories,
-                           totals=totals)
-
-
-# ---------- AI PREDICTION ----------
-@app.route("/ai")
-def ai_prediction():
-
-    conn = sqlite3.connect("database.db")
-    data = conn.execute("SELECT amount FROM expenses").fetchall()
-    conn.close()
+    cursor.execute("SELECT amount FROM expenses")
+    data = cursor.fetchall()
 
     if len(data) < 2:
-        return render_template("ai.html",
-                               prediction="Not enough data")
+        return redirect("/")
 
-    months = np.array(range(len(data))).reshape(-1, 1)
-    totals = np.array([row[0] for row in data])
+    X = np.array(range(len(data))).reshape(-1, 1)
+    y = np.array([d[0] for d in data])
 
     model = LinearRegression()
-    model.fit(months, totals)
+    model.fit(X, y)
 
-    next_month = np.array([[len(data)]])
-    prediction = model.predict(next_month)[0]
+    next_value = model.predict([[len(data)]])[0]
+    prediction = round(next_value, 2)
 
-    return render_template("ai.html",
-                           prediction=int(prediction))
+    # Re-fetch everything for page
+    cursor.execute("SELECT * FROM expenses ORDER BY date DESC")
+    expenses = cursor.fetchall()
 
-@app.route("/")
-def start():
-    return redirect("/login")
-# ---------- MAIN ----------
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    total_result = cursor.fetchone()
+    total = total_result[0] if total_result[0] else 0
+
+    cursor.execute("SELECT monthly_budget FROM budget ORDER BY id DESC LIMIT 1")
+    budget_result = cursor.fetchone()
+    budget = budget_result[0] if budget_result else 0
+
+    cursor.execute("SELECT category, SUM(amount) FROM expenses GROUP BY category")
+    category_data = cursor.fetchall()
+    categories = [row[0] for row in category_data]
+    amounts = [row[1] for row in category_data]
+
+    cursor.execute("SELECT date, amount FROM expenses ORDER BY date")
+    trend_data = cursor.fetchall()
+    dates = [row[0] for row in trend_data]
+    trend_amounts = [row[1] for row in trend_data]
+
+    return render_template(
+        "index.html",
+        expenses=expenses,
+        total=total,
+        budget=budget,
+        prediction=prediction,
+        categories=categories,
+        amounts=amounts,
+        dates=dates,
+        trend_amounts=trend_amounts
+    )
+
+
+# ===============================
+# RUN APP
+# ===============================
+# ===============================
+# DELETE EXPENSE
+# ===============================
+@app.route("/delete/<int:id>")
+def delete(id):
+    cursor.execute("DELETE FROM expenses WHERE id=?", (id,))
+    conn.commit()
+    return redirect("/")
+
+
+# ===============================
+# EXPORT CSV  👇 ADD HERE
+# ===============================
+@app.route("/export")
+def export():
+    cursor.execute("SELECT * FROM expenses")
+    data = cursor.fetchall()
+
+    from flask import Response
+
+    def generate():
+        yield "ID,Amount,Category,Date\n"
+        for row in data:
+            yield f"{row[0]},{row[1]},{row[2]},{row[3]}\n"
+
+    return Response(generate(),
+                    mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment;filename=expenses.csv"})
+
+
+# ===============================
+# RUN APP
+# ===============================
 if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True)
